@@ -31,14 +31,29 @@ def get_shortcode(url: str):
 # --- MOTOR 1: YT-DLP (Optimizado para Single File) ---
 def engine_ytdlp(url: str):
     print("   ↳ [1] yt-dlp...")
+
+    # Lógica inteligente de Cookies
+    # 1. Producción (Render Secret File)
+    cookie_path = "/etc/secrets/cookies.txt"
+    # 2. Desarrollo (Local)
+    if not os.path.exists(cookie_path):
+        cookie_path = "cookies.txt"
+    
+    # Si no existe en ninguno, avisamos (pero intentamos sin cookies)
+    if os.path.exists(cookie_path):
+        print(f"   🍪 Cookies loaded from: {cookie_path}")
+    else:
+        print("   ⚠️ No cookies found. Running in anonymous mode (High Risk of Block).")
+        cookie_path = None
+
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
-        # 'best' busca el mejor archivo único (evita necesitar ffmpeg para unir audio/video)
-        'format': 'best', 
+        'format': 'best',
         'nocheckcertificate': True,
         'ignoreerrors': True,
         'socket_timeout': 15,
+        'cookiefile': cookie_path, # <--- AQUÍ ESTÁ LA MAGIA
         'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
     }
     
@@ -46,17 +61,13 @@ def engine_ytdlp(url: str):
         info = ydl.extract_info(url, download=False)
         if not info: raise ValueError("No info")
         
-        # Gestión de Carruseles: Si es playlist, cogemos el primero
         if 'entries' in info:
             info = info['entries'][0]
 
-        # Detección
         media_url = info.get('url')
         ext = info.get('ext')
-        # Es video si la extensión es mp4 O si el formato dice video
         is_video = ext == 'mp4' or 'video' in info.get('format', '').lower()
 
-        # Si no es video, yt-dlp a veces pone la url de la imagen en 'url'
         if not is_video and not media_url:
             media_url = info.get('thumbnail')
 
