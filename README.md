@@ -4,7 +4,7 @@
 
 ### The High-Fidelity Media Extraction Protocol
 
-![OffGrid Preview](public/home.png)
+![OffGrid Preview](public/preview.webp)
 
 ![System Status](https://img.shields.io/badge/SYSTEM-ONLINE-00ff9d?style=for-the-badge&logo=prometheus&logoColor=black)
 ![License](https://img.shields.io/badge/LICENSE-MIT-white?style=for-the-badge)
@@ -56,7 +56,7 @@ Written in **Python (FastAPI)**. It acts as the brain, intelligently switching b
 
 ### 👁️ The Interface (Frontend)
 
-Built with **Next.js 14**, **Tailwind**, and **Framer Motion**. It provides a "hacker-console" experience, featuring real-time terminal logs, scanline effects, and zero-dependency hydration.
+Built with **Next.js 16**, **Tailwind**, and **Framer Motion**. It provides a "hacker-console" experience, featuring real-time terminal logs, scanline effects, and zero-dependency hydration.
 
 ---
 
