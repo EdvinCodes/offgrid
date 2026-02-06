@@ -2,6 +2,7 @@ import yt_dlp
 import uvicorn
 import requests
 import instaloader
+import os
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -120,4 +121,7 @@ async def proxy_media(url: str = Query(..., description="Target URL")):
         raise HTTPException(status_code=502, detail="Tunnel collapsed")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Obtenemos el puerto de la nube, o usamos 8000 si estamos en casa
+    port = int(os.environ.get("PORT", 8000))
+    # host="0.0.0.0" es OBLIGATORIO para que Render/Docker puedan ver tu app
+    uvicorn.run(app, host="0.0.0.0", port=port)

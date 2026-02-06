@@ -1,6 +1,7 @@
 "use server";
 
-const ENGINE_URL = "http://127.0.0.1:8000/extract";
+const BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const ENGINE_URL = `${BASE}/extract`;
 
 type ExtractResponse = {
   success: boolean;

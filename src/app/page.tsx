@@ -23,7 +23,7 @@ interface ExtractionResult {
   description?: string;
 }
 
-const ENGINE_BASE = "http://127.0.0.1:8000";
+const ENGINE_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const LOADING_STEPS = [
   "Initializing handshake...",
