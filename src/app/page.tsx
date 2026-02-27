@@ -18,6 +18,9 @@ import {
   History,
   X,
   Image,
+  ChevronLeft,
+  ChevronRight as ChevronRightIcon,
+  Layers,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -32,8 +35,9 @@ interface ExtractionItem {
 
 interface HistoryEntry {
   id: string;
-  sourceUrl: string; // URL de Instagram original
+  sourceUrl: string;
   item: ExtractionItem;
+  allItems: ExtractionItem[]; // guardamos todos los items del carrusel
   format: FormatType;
   timestamp: number;
 }
@@ -72,17 +76,17 @@ function saveHistory(entries: HistoryEntry[]) {
   );
 }
 
-function formatTimeAgo(timestamp: number): string {
-  const diff = Date.now() - timestamp;
+function formatTimeAgo(ts: number): string {
+  const diff = Date.now() - ts;
   const mins = Math.floor(diff / 60_000);
   const hours = Math.floor(diff / 3_600_000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
   if (hours < 24) return `${hours}h ago`;
-  return new Date(timestamp).toLocaleDateString();
+  return new Date(ts).toLocaleDateString();
 }
 
-// ─── COMPONENTE HISTORIAL ───────────────────────────────────────────────────
+// ─── HISTORY PANEL ──────────────────────────────────────────────────────────
 function HistoryPanel({
   entries,
   onSelect,
@@ -107,7 +111,6 @@ function HistoryPanel({
       exit={{ opacity: 0, y: 8 }}
       className="w-full rounded-lg border border-neutral-800 bg-[#0a0a0a] overflow-hidden"
     >
-      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
         <div className="flex items-center gap-2 text-[10px] text-neutral-400 uppercase tracking-widest">
           <History className="w-3 h-3" />
@@ -124,14 +127,12 @@ function HistoryPanel({
         </button>
       </div>
 
-      {/* Entries */}
       <ul className="divide-y divide-neutral-900">
         {entries.map((entry) => (
           <li
             key={entry.id}
             className="group flex items-center gap-3 px-4 py-3 hover:bg-neutral-900/50 transition-colors"
           >
-            {/* Thumbnail */}
             <button
               onClick={() => onSelect(entry)}
               className="shrink-0 w-10 h-10 rounded overflow-hidden border border-neutral-800 bg-black"
@@ -146,7 +147,6 @@ function HistoryPanel({
               />
             </button>
 
-            {/* Info */}
             <button
               onClick={() => onSelect(entry)}
               className="flex-1 text-left min-w-0"
@@ -159,10 +159,16 @@ function HistoryPanel({
                 <span className="text-[9px] text-neutral-600 uppercase tracking-widest">
                   {entry.format} · {formatTimeAgo(entry.timestamp)}
                 </span>
+                {/* Badge si era carrusel */}
+                {entry.allItems.length > 1 && (
+                  <span className="flex items-center gap-0.5 text-[9px] text-neutral-600">
+                    <Layers className="w-2.5 h-2.5" />
+                    {entry.allItems.length}
+                  </span>
+                )}
               </div>
             </button>
 
-            {/* Delete */}
             <button
               onClick={() => onDelete(entry.id)}
               className="shrink-0 opacity-0 group-hover:opacity-100 text-neutral-700 hover:text-red-400 transition-all"
@@ -176,26 +182,72 @@ function HistoryPanel({
   );
 }
 
-// ─── PÁGINA PRINCIPAL ───────────────────────────────────────────────────────
+// ─── MEDIA RENDERER ──────────────────────────────────────────────────────────
+function MediaRenderer({
+  item,
+  previewUrl,
+}: {
+  item: ExtractionItem;
+  previewUrl: string;
+}) {
+  if (item.type === "video") {
+    return (
+      <video
+        key={previewUrl} // key fuerza re-mount al cambiar de slide
+        src={previewUrl}
+        poster={item.thumbnail}
+        className="w-full h-full max-h-[400px] object-contain relative z-0"
+        controls
+        autoPlay
+        muted
+        loop
+      />
+    );
+  }
+
+  if (item.type === "audio") {
+    return (
+      <div className="flex flex-col items-center gap-4 p-8 z-0 w-full">
+        {item.thumbnail && (
+          <img
+            src={item.thumbnail}
+            className="w-32 h-32 rounded-full object-cover border border-neutral-800"
+            alt="Audio thumbnail"
+          />
+        )}
+        <audio key={previewUrl} src={previewUrl} controls className="w-full" />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={previewUrl}
+      className="w-full h-full object-contain relative z-0"
+      alt="Extracted media"
+    />
+  );
+}
+
+// ─── PÁGINA PRINCIPAL ────────────────────────────────────────────────────────
 export default function HomePage() {
   const [url, setUrl] = useState("");
   const [format, setFormat] = useState<FormatType>("mp4");
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState("");
-  const [result, setResult] = useState<ExtractionItem | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [engineStatus, setEngineStatus] = useState<EngineStatus>("checking");
-
-  // ── Feature 3: Historial ─────────────────────────────────────────────────
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
-  // Cargar historial desde localStorage al montar
-  useEffect(() => {
-    setHistory(loadHistory());
-  }, []);
+  // ── Feature 4: carrusel ──────────────────────────────────────────────────
+  const [items, setItems] = useState<ExtractionItem[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const result = items[activeIndex] ?? null;
 
-  // ── Health check ──────────────────────────────────────────────────────────
+  const isReel = /instagram\.com\/reel\//.test(url);
+
+  // ── Health check ─────────────────────────────────────────────────────────
   useEffect(() => {
     const check = async () => {
       try {
@@ -212,7 +264,7 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, []);
 
-  // ── Loading steps ─────────────────────────────────────────────────────────
+  // ── Loading steps ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!loading) return;
     let step = 0;
@@ -223,7 +275,24 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, [loading]);
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
+  // ── Cargar historial ─────────────────────────────────────────────────────
+  useEffect(() => {
+    setHistory(loadHistory());
+  }, []);
+
+  // ── Keyboard navigation del carrusel ────────────────────────────────────
+  useEffect(() => {
+    if (items.length <= 1) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") setActiveIndex((i) => Math.max(0, i - 1));
+      if (e.key === "ArrowRight")
+        setActiveIndex((i) => Math.min(items.length - 1, i + 1));
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [items.length]);
+
+  // ── Handlers ─────────────────────────────────────────────────────────────
   const handleExtract = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!url.trim()) return;
@@ -232,28 +301,38 @@ export default function HomePage() {
       toast.error("Only Instagram post, reel or TV links are supported.");
       return;
     }
-
     if (engineStatus === "offline") {
       toast.error("Engine offline. Start the backend first.");
       return;
     }
 
     setLoading(true);
-    setResult(null);
+    setItems([]);
+    setActiveIndex(0);
     setShowHistory(false);
 
     const data = await extractMedia(url.trim(), format);
 
     if (data.success && data.items && data.items.length > 0) {
-      const newItem = data.items[0] as ExtractionItem;
-      setResult(newItem);
-      toast.success("Target acquired.");
+      const extracted = data.items as ExtractionItem[];
+      setItems(extracted);
+      setActiveIndex(0);
 
-      // ── Guardar en historial ────────────────────────────────────────────
+      // Notificación según cantidad
+      if (extracted.length > 1) {
+        toast.success(
+          `${extracted.length} assets extracted — use arrows to navigate.`,
+        );
+      } else {
+        toast.success("Target acquired.");
+      }
+
+      // Guardar en historial (primer item como preview)
       const entry: HistoryEntry = {
         id: crypto.randomUUID(),
         sourceUrl: url.trim(),
-        item: newItem,
+        item: extracted[0],
+        allItems: extracted,
         format,
         timestamp: Date.now(),
       };
@@ -267,9 +346,10 @@ export default function HomePage() {
     setLoading(false);
   };
 
-  // Restaurar resultado desde historial sin re-extraer
+  // Restaurar desde historial (recupera todos los items del carrusel)
   const handleSelectHistory = (entry: HistoryEntry) => {
-    setResult(entry.item);
+    setItems(entry.allItems);
+    setActiveIndex(0);
     setUrl(entry.sourceUrl);
     setFormat(entry.format);
     setShowHistory(false);
@@ -318,6 +398,25 @@ export default function HomePage() {
     setDownloading(false);
   };
 
+  // Descargar TODOS los items del carrusel de una vez
+  const handleDownloadAll = () => {
+    if (items.length <= 1) return;
+    items.forEach((item, i) => {
+      const ext =
+        item.type === "video" ? "mp4" : item.type === "audio" ? "mp3" : "jpg";
+      const tunnelUrl = `${ENGINE_BASE}/proxy?url=${encodeURIComponent(item.url)}&download=true&ext=${ext}`;
+      setTimeout(() => {
+        const a = document.createElement("a");
+        a.href = tunnelUrl;
+        a.download = `offgrid_${i + 1}_${Date.now()}.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }, i * 400); // delay escalonado para no saturar
+    });
+    toast.success(`Downloading all ${items.length} assets...`);
+  };
+
   const getTypeIcon = () => {
     if (result?.type === "video") return <Disc className="w-3 h-3" />;
     if (result?.type === "audio") return <Music className="w-3 h-3" />;
@@ -354,8 +453,6 @@ export default function HomePage() {
             <WifiOff className="w-3 h-3 text-red-500" />
           )}
         </div>
-
-        {/* ── Botón historial en el header ── */}
         {history.length > 0 && (
           <button
             onClick={() => setShowHistory((v) => !v)}
@@ -383,32 +480,34 @@ export default function HomePage() {
         </div>
 
         {/* Format Toggle */}
-        <div className="flex items-center gap-1 bg-[#0a0a0a] border border-neutral-800 rounded-md p-1 w-fit">
-          <button
-            type="button"
-            onClick={() => setFormat("mp4")}
-            className={`flex items-center gap-1.5 px-4 py-1.5 rounded text-xs font-bold uppercase tracking-widest transition-all ${
-              format === "mp4"
-                ? "bg-white text-black"
-                : "text-neutral-500 hover:text-neutral-300"
-            }`}
-          >
-            <Video className="w-3 h-3" />
-            MP4
-          </button>
-          <button
-            type="button"
-            onClick={() => setFormat("mp3")}
-            className={`flex items-center gap-1.5 px-4 py-1.5 rounded text-xs font-bold uppercase tracking-widest transition-all ${
-              format === "mp3"
-                ? "bg-emerald-500 text-black"
-                : "text-neutral-500 hover:text-neutral-300"
-            }`}
-          >
-            <Music className="w-3 h-3" />
-            MP3
-          </button>
-        </div>
+        {isReel && (
+          <div className="flex items-center gap-1 bg-[#0a0a0a] border border-neutral-800 rounded-md p-1 w-fit">
+            <button
+              type="button"
+              onClick={() => setFormat("mp4")}
+              className={`flex items-center gap-1.5 px-4 py-1.5 rounded text-xs font-bold uppercase tracking-widest transition-all ${
+                format === "mp4"
+                  ? "bg-white text-black"
+                  : "text-neutral-500 hover:text-neutral-300"
+              }`}
+            >
+              <Video className="w-3 h-3" />
+              MP4
+            </button>
+            <button
+              type="button"
+              onClick={() => setFormat("mp3")}
+              className={`flex items-center gap-1.5 px-4 py-1.5 rounded text-xs font-bold uppercase tracking-widest transition-all ${
+                format === "mp3"
+                  ? "bg-emerald-500 text-black"
+                  : "text-neutral-500 hover:text-neutral-300"
+              }`}
+            >
+              <Music className="w-3 h-3" />
+              MP3
+            </button>
+          </div>
+        )}
 
         {/* Input Console */}
         <motion.form
@@ -425,7 +524,12 @@ export default function HomePage() {
             <Input
               placeholder="Paste Instagram link..."
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => {
+                setUrl(e.target.value);
+                if (!/instagram\.com\/reel\//.test(e.target.value)) {
+                  setFormat("mp4"); // reset silencioso
+                }
+              }}
               className="h-12 border-none bg-transparent shadow-none focus-visible:ring-0 text-base font-mono text-neutral-200 placeholder:text-neutral-700"
               autoComplete="off"
               spellCheck={false}
@@ -442,7 +546,6 @@ export default function HomePage() {
               )}
             </button>
           </div>
-
           <div className="h-6 mt-2 text-[10px] text-emerald-500/80 font-mono pl-4 flex items-center gap-2">
             {loading && (
               <>
@@ -458,7 +561,7 @@ export default function HomePage() {
           </div>
         </motion.form>
 
-        {/* ── Feature 3: Panel historial ── */}
+        {/* History Panel */}
         <AnimatePresence>
           {showHistory && history.length > 0 && (
             <HistoryPanel
@@ -480,7 +583,7 @@ export default function HomePage() {
               transition={{ duration: 0.4, ease: "circOut" }}
               className="w-full"
             >
-              <div className="rounded-lg border border-neutral-800 bg-[#0a0a0a] overflow-hidden shadow-2xl relative">
+              <div className="rounded-lg border border-neutral-800 bg-[#0a0a0a] overflow-hidden shadow-2xl">
                 <div className="h-1 w-full bg-gradient-to-r from-emerald-500 via-neutral-800 to-neutral-900" />
 
                 <div className="flex flex-col md:flex-row">
@@ -488,39 +591,73 @@ export default function HomePage() {
                   <div className="w-full md:w-1/2 bg-black border-b md:border-b-0 md:border-r border-neutral-800 relative min-h-[300px] flex items-center justify-center overflow-hidden">
                     <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 z-10 pointer-events-none" />
 
-                    {result.type === "video" ? (
-                      <video
-                        src={previewUrl}
-                        poster={result.thumbnail}
-                        className="w-full h-full max-h-[400px] object-contain relative z-0"
-                        controls
-                        autoPlay
-                        muted
-                        loop
-                      />
-                    ) : result.type === "audio" ? (
-                      <div className="flex flex-col items-center gap-4 p-8 z-0">
-                        {result.thumbnail && (
-                          <img
-                            src={result.thumbnail}
-                            className="w-32 h-32 rounded-full object-cover border border-neutral-800"
-                            alt="Audio thumbnail"
-                          />
-                        )}
-                        <audio src={previewUrl} controls className="w-full" />
-                      </div>
-                    ) : (
-                      <img
-                        src={previewUrl}
-                        className="w-full h-full object-contain relative z-0"
-                        alt="Extracted media"
-                      />
-                    )}
+                    {/* ── Animación entre slides ── */}
+                    <AnimatePresence mode="wait">
+                      <motion.div
+                        key={activeIndex}
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -20 }}
+                        transition={{ duration: 0.2 }}
+                        className="w-full h-full flex items-center justify-center"
+                      >
+                        <MediaRenderer item={result} previewUrl={previewUrl} />
+                      </motion.div>
+                    </AnimatePresence>
 
+                    {/* Type tag */}
                     <div className="absolute top-3 left-3 z-20 bg-black/50 backdrop-blur border border-white/10 px-2 py-1 rounded text-[10px] text-white uppercase tracking-widest flex items-center gap-2">
                       {getTypeIcon()}
                       {result.type.toUpperCase()}_OBJ
                     </div>
+
+                    {/* ── Feature 4: Controles del carrusel ── */}
+                    {items.length > 1 && (
+                      <>
+                        {/* Flechas */}
+                        <button
+                          onClick={() =>
+                            setActiveIndex((i) => Math.max(0, i - 1))
+                          }
+                          disabled={activeIndex === 0}
+                          className="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 bg-black/60 backdrop-blur border border-white/10 rounded-full flex items-center justify-center text-white disabled:opacity-20 hover:bg-white/10 transition-all"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() =>
+                            setActiveIndex((i) =>
+                              Math.min(items.length - 1, i + 1),
+                            )
+                          }
+                          disabled={activeIndex === items.length - 1}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 bg-black/60 backdrop-blur border border-white/10 rounded-full flex items-center justify-center text-white disabled:opacity-20 hover:bg-white/10 transition-all"
+                        >
+                          <ChevronRightIcon className="w-4 h-4" />
+                        </button>
+
+                        {/* Dots de posición */}
+                        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5">
+                          {items.map((_, i) => (
+                            <button
+                              key={i}
+                              onClick={() => setActiveIndex(i)}
+                              className={`rounded-full transition-all ${
+                                i === activeIndex
+                                  ? "w-4 h-1.5 bg-emerald-400"
+                                  : "w-1.5 h-1.5 bg-white/30 hover:bg-white/60"
+                              }`}
+                            />
+                          ))}
+                        </div>
+
+                        {/* Counter badge */}
+                        <div className="absolute top-3 right-3 z-20 bg-black/60 backdrop-blur border border-white/10 px-2 py-1 rounded text-[10px] text-white font-mono flex items-center gap-1">
+                          <Layers className="w-3 h-3 text-emerald-400" />
+                          {activeIndex + 1}/{items.length}
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   {/* Metadata & Controls */}
@@ -530,7 +667,6 @@ export default function HomePage() {
                         <ShieldCheck className="w-4 h-4" />
                         <span>Secure Connection</span>
                       </div>
-
                       <div className="space-y-1">
                         <span className="text-[10px] text-neutral-500 uppercase tracking-widest">
                           Payload Data
@@ -559,10 +695,25 @@ export default function HomePage() {
                         ) : (
                           <>
                             <Download className="w-4 h-4 group-hover:translate-y-0.5 transition-transform" />
-                            <span>Pull to Local Drive</span>
+                            <span>
+                              {items.length > 1
+                                ? `Pull Asset ${activeIndex + 1}/${items.length}`
+                                : "Pull to Local Drive"}
+                            </span>
                           </>
                         )}
                       </button>
+
+                      {/* ── Botón Download All (solo en carruseles) ── */}
+                      {items.length > 1 && (
+                        <button
+                          onClick={handleDownloadAll}
+                          className="w-full h-10 border border-emerald-900 hover:border-emerald-500 text-emerald-700 hover:text-emerald-400 text-xs uppercase tracking-widest transition-colors flex items-center justify-center gap-2"
+                        >
+                          <Layers className="w-3 h-3" />
+                          Download All {items.length} Assets
+                        </button>
+                      )}
                     </div>
 
                     <div className="pt-4 border-t border-neutral-900 flex justify-between text-[9px] text-neutral-600 font-mono uppercase">

@@ -88,6 +88,9 @@ def engine_ytdlp(request: ExtractionRequest) -> dict:
     print("   ↳ [1] yt-dlp...")
     cookie_path = _resolve_cookie_path()
 
+    # Detectar si es un reel o un post normal
+    is_reel = "/reel/" in request.url
+
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
@@ -96,13 +99,20 @@ def engine_ytdlp(request: ExtractionRequest) -> dict:
         "socket_timeout": 15,
         "cookiefile": cookie_path,
         "extract_flat": False,
-        "format": "bestaudio/best" if request.format_type == "mp3" else "best",
         "user_agent": (
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
             "AppleWebKit/605.1.15 (KHTML, like Gecko) "
             "Version/17.0 Mobile/15E148 Safari/604.1"
         ),
     }
+
+    # ✅ FIX: Para posts normales no aplicamos filtro de formato
+    # para que yt-dlp traiga TODOS los assets (imágenes + vídeos)
+    if is_reel and request.format_type == "mp3":
+        ydl_opts["format"] = "bestaudio/best"
+    elif is_reel:
+        ydl_opts["format"] = "best"
+    # Posts /p/ → sin 'format' key, yt-dlp extrae todo
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(request.url, download=False)
@@ -119,21 +129,23 @@ def engine_ytdlp(request: ExtractionRequest) -> dict:
             media_url = entry.get("url")
             ext = entry.get("ext", "")
             fmt = entry.get("format", "").lower()
+
+            # Detectar tipo real del entry
             is_video = ext == "mp4" or "video" in fmt
 
-            if request.format_type == "mp3":
+            if is_reel and request.format_type == "mp3":
                 item_type = "audio"
             elif is_video:
                 item_type = "video"
             else:
                 item_type = "image"
 
-            # Fallback: si no hay URL de media, usar thumbnail
+            # Fallback a thumbnail si no hay URL de media
             if not media_url:
                 media_url = entry.get("thumbnail")
 
             if not media_url:
-                continue  # Saltamos entradas vacías en vez de añadir None
+                continue
 
             results.append({
                 "type": item_type,
