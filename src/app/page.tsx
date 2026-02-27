@@ -15,10 +15,14 @@ import {
   Music,
   Video,
   WifiOff,
+  History,
+  X,
+  Image,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 
+// ─── TIPOS ──────────────────────────────────────────────────────────────────
 interface ExtractionItem {
   type: "video" | "image" | "audio";
   url: string;
@@ -26,7 +30,20 @@ interface ExtractionItem {
   description?: string;
 }
 
+interface HistoryEntry {
+  id: string;
+  sourceUrl: string; // URL de Instagram original
+  item: ExtractionItem;
+  format: FormatType;
+  timestamp: number;
+}
+
+type FormatType = "mp4" | "mp3";
+type EngineStatus = "checking" | "online" | "offline";
+
 const ENGINE_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const HISTORY_KEY = "offgrid_history";
+const MAX_HISTORY = 8;
 
 const LOADING_STEPS = [
   "Initializing handshake...",
@@ -39,10 +56,127 @@ const LOADING_STEPS = [
 const INSTAGRAM_REGEX =
   /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[A-Za-z0-9_-]+/;
 
-// ─── TIPOS ──────────────────────────────────────────────────────────────────
-type FormatType = "mp4" | "mp3";
-type EngineStatus = "checking" | "online" | "offline";
+// ─── HELPERS ────────────────────────────────────────────────────────────────
+function loadHistory(): HistoryEntry[] {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
 
+function saveHistory(entries: HistoryEntry[]) {
+  localStorage.setItem(
+    HISTORY_KEY,
+    JSON.stringify(entries.slice(0, MAX_HISTORY)),
+  );
+}
+
+function formatTimeAgo(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const mins = Math.floor(diff / 60_000);
+  const hours = Math.floor(diff / 3_600_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
+
+// ─── COMPONENTE HISTORIAL ───────────────────────────────────────────────────
+function HistoryPanel({
+  entries,
+  onSelect,
+  onDelete,
+  onClear,
+}: {
+  entries: HistoryEntry[];
+  onSelect: (entry: HistoryEntry) => void;
+  onDelete: (id: string) => void;
+  onClear: () => void;
+}) {
+  const typeIcon = (type: ExtractionItem["type"]) => {
+    if (type === "video") return <Disc className="w-3 h-3 text-emerald-500" />;
+    if (type === "audio") return <Music className="w-3 h-3 text-purple-400" />;
+    return <Image className="w-3 h-3 text-blue-400" />;
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 8 }}
+      className="w-full rounded-lg border border-neutral-800 bg-[#0a0a0a] overflow-hidden"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
+        <div className="flex items-center gap-2 text-[10px] text-neutral-400 uppercase tracking-widest">
+          <History className="w-3 h-3" />
+          <span>Extraction Log</span>
+          <span className="bg-neutral-800 text-neutral-500 px-1.5 py-0.5 rounded text-[9px]">
+            {entries.length}/{MAX_HISTORY}
+          </span>
+        </div>
+        <button
+          onClick={onClear}
+          className="text-[9px] text-neutral-600 hover:text-red-400 uppercase tracking-widest transition-colors"
+        >
+          Clear All
+        </button>
+      </div>
+
+      {/* Entries */}
+      <ul className="divide-y divide-neutral-900">
+        {entries.map((entry) => (
+          <li
+            key={entry.id}
+            className="group flex items-center gap-3 px-4 py-3 hover:bg-neutral-900/50 transition-colors"
+          >
+            {/* Thumbnail */}
+            <button
+              onClick={() => onSelect(entry)}
+              className="shrink-0 w-10 h-10 rounded overflow-hidden border border-neutral-800 bg-black"
+            >
+              <img
+                src={entry.item.thumbnail}
+                alt=""
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = "none";
+                }}
+              />
+            </button>
+
+            {/* Info */}
+            <button
+              onClick={() => onSelect(entry)}
+              className="flex-1 text-left min-w-0"
+            >
+              <p className="text-[11px] text-neutral-300 truncate font-mono">
+                {entry.item.description || entry.sourceUrl}
+              </p>
+              <div className="flex items-center gap-2 mt-0.5">
+                {typeIcon(entry.item.type)}
+                <span className="text-[9px] text-neutral-600 uppercase tracking-widest">
+                  {entry.format} · {formatTimeAgo(entry.timestamp)}
+                </span>
+              </div>
+            </button>
+
+            {/* Delete */}
+            <button
+              onClick={() => onDelete(entry.id)}
+              className="shrink-0 opacity-0 group-hover:opacity-100 text-neutral-700 hover:text-red-400 transition-all"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </motion.div>
+  );
+}
+
+// ─── PÁGINA PRINCIPAL ───────────────────────────────────────────────────────
 export default function HomePage() {
   const [url, setUrl] = useState("");
   const [format, setFormat] = useState<FormatType>("mp4");
@@ -50,10 +184,18 @@ export default function HomePage() {
   const [loadingMsg, setLoadingMsg] = useState("");
   const [result, setResult] = useState<ExtractionItem | null>(null);
   const [downloading, setDownloading] = useState(false);
-
-  // ── Feature 2: Health check ─────────────────────────────────────────────
   const [engineStatus, setEngineStatus] = useState<EngineStatus>("checking");
 
+  // ── Feature 3: Historial ─────────────────────────────────────────────────
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+
+  // Cargar historial desde localStorage al montar
+  useEffect(() => {
+    setHistory(loadHistory());
+  }, []);
+
+  // ── Health check ──────────────────────────────────────────────────────────
   useEffect(() => {
     const check = async () => {
       try {
@@ -66,12 +208,11 @@ export default function HomePage() {
       }
     };
     check();
-    // Re-check cada 60s
     const interval = setInterval(check, 60_000);
     return () => clearInterval(interval);
   }, []);
 
-  // ── Loading steps animation ─────────────────────────────────────────────
+  // ── Loading steps ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!loading) return;
     let step = 0;
@@ -82,7 +223,7 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, [loading]);
 
-  // ── Handlers ────────────────────────────────────────────────────────────
+  // ── Handlers ──────────────────────────────────────────────────────────────
   const handleExtract = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!url.trim()) return;
@@ -99,18 +240,53 @@ export default function HomePage() {
 
     setLoading(true);
     setResult(null);
+    setShowHistory(false);
 
-    // ── Feature 1: pasamos el formato seleccionado ──────────────────────
     const data = await extractMedia(url.trim(), format);
 
     if (data.success && data.items && data.items.length > 0) {
-      setResult(data.items[0] as ExtractionItem);
+      const newItem = data.items[0] as ExtractionItem;
+      setResult(newItem);
       toast.success("Target acquired.");
+
+      // ── Guardar en historial ────────────────────────────────────────────
+      const entry: HistoryEntry = {
+        id: crypto.randomUUID(),
+        sourceUrl: url.trim(),
+        item: newItem,
+        format,
+        timestamp: Date.now(),
+      };
+      const updated = [entry, ...history].slice(0, MAX_HISTORY);
+      setHistory(updated);
+      saveHistory(updated);
     } else {
       toast.error(data.error || "Connection refused by host.");
     }
 
     setLoading(false);
+  };
+
+  // Restaurar resultado desde historial sin re-extraer
+  const handleSelectHistory = (entry: HistoryEntry) => {
+    setResult(entry.item);
+    setUrl(entry.sourceUrl);
+    setFormat(entry.format);
+    setShowHistory(false);
+    toast.info("Log entry restored.");
+  };
+
+  const handleDeleteHistory = (id: string) => {
+    const updated = history.filter((e) => e.id !== id);
+    setHistory(updated);
+    saveHistory(updated);
+  };
+
+  const handleClearHistory = () => {
+    setHistory([]);
+    localStorage.removeItem(HISTORY_KEY);
+    setShowHistory(false);
+    toast.success("Log cleared.");
   };
 
   const copyToClipboard = async () => {
@@ -152,7 +328,6 @@ export default function HomePage() {
     ? `${ENGINE_BASE}/proxy?url=${encodeURIComponent(result.url)}`
     : "";
 
-  // ── Status dot config ────────────────────────────────────────────────────
   const statusConfig = {
     checking: { color: "bg-yellow-500", label: "Checking Engine..." },
     online: { color: "bg-emerald-500", label: "System Online" },
@@ -164,7 +339,7 @@ export default function HomePage() {
     <main className="min-h-screen w-full relative flex flex-col items-center justify-center p-6 bg-dot-pattern overflow-hidden font-mono">
       <div className="scanline" />
 
-      {/* ── Feature 2: Header con status real ── */}
+      {/* Header */}
       <header className="fixed top-0 left-0 right-0 p-6 flex justify-between items-center z-50 text-[10px] uppercase tracking-widest text-neutral-500">
         <div className="flex items-center gap-2">
           <div className={`w-2 h-2 ${dotColor} rounded-full animate-pulse`} />
@@ -179,9 +354,24 @@ export default function HomePage() {
             <WifiOff className="w-3 h-3 text-red-500" />
           )}
         </div>
+
+        {/* ── Botón historial en el header ── */}
+        {history.length > 0 && (
+          <button
+            onClick={() => setShowHistory((v) => !v)}
+            className={`flex items-center gap-1.5 transition-colors ${
+              showHistory
+                ? "text-emerald-400"
+                : "text-neutral-600 hover:text-neutral-300"
+            }`}
+          >
+            <History className="w-3 h-3" />
+            <span>Log ({history.length})</span>
+          </button>
+        )}
       </header>
 
-      <div className="z-10 w-full max-w-2xl flex flex-col gap-10">
+      <div className="z-10 w-full max-w-2xl flex flex-col gap-8">
         {/* Branding */}
         <div className="space-y-2 text-center md:text-left">
           <h1 className="text-5xl md:text-6xl font-bold tracking-tighter text-white">
@@ -192,7 +382,7 @@ export default function HomePage() {
           </p>
         </div>
 
-        {/* ── Feature 1: Format Toggle ── */}
+        {/* Format Toggle */}
         <div className="flex items-center gap-1 bg-[#0a0a0a] border border-neutral-800 rounded-md p-1 w-fit">
           <button
             type="button"
@@ -253,7 +443,6 @@ export default function HomePage() {
             </button>
           </div>
 
-          {/* Status log */}
           <div className="h-6 mt-2 text-[10px] text-emerald-500/80 font-mono pl-4 flex items-center gap-2">
             {loading && (
               <>
@@ -261,7 +450,6 @@ export default function HomePage() {
                 <span>{loadingMsg}</span>
               </>
             )}
-            {/* Aviso offline bajo el input */}
             {!loading && engineStatus === "offline" && (
               <span className="text-red-500/80">
                 ENGINE_OFFLINE — Run python backend/server.py
@@ -269,6 +457,18 @@ export default function HomePage() {
             )}
           </div>
         </motion.form>
+
+        {/* ── Feature 3: Panel historial ── */}
+        <AnimatePresence>
+          {showHistory && history.length > 0 && (
+            <HistoryPanel
+              entries={history}
+              onSelect={handleSelectHistory}
+              onDelete={handleDeleteHistory}
+              onClear={handleClearHistory}
+            />
+          )}
+        </AnimatePresence>
 
         {/* Result Interface */}
         <AnimatePresence mode="wait">
@@ -367,7 +567,6 @@ export default function HomePage() {
 
                     <div className="pt-4 border-t border-neutral-900 flex justify-between text-[9px] text-neutral-600 font-mono uppercase">
                       <span>Proxy: Active</span>
-                      {/* ── Feature 1: muestra el formato activo en el resultado ── */}
                       <span>
                         Format:{" "}
                         <span
