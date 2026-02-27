@@ -452,59 +452,34 @@ export default function HomePage() {
   const handleDownload = async () => {
     if (!result || downloading) return;
     setDownloading(true);
-    setDownloadProgress(0);
 
+    // Definimos la extensión según el tipo de archivo
     const ext =
       result.type === "video" ? "mp4" : result.type === "audio" ? "mp3" : "jpg";
+
+    // Construimos la URL del túnel proxy
     const tunnelUrl = `${ENGINE_BASE}/proxy?url=${encodeURIComponent(result.url)}&download=true&ext=${ext}`;
 
     try {
-      const res = await fetch(tunnelUrl);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      // Content-Length para calcular % real
-      const contentLength = res.headers.get("content-length");
-      const total = contentLength ? parseInt(contentLength, 10) : null;
-
-      const reader = res.body!.getReader();
-      const chunks: Uint8Array[] = [];
-      let received = 0;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        received += value.length;
-        if (total) {
-          setDownloadProgress(Math.round((received / total) * 100));
-        } else {
-          // Sin Content-Length: animación indeterminada
-          setDownloadProgress((p) => Math.min(p + 5, 90));
-        }
-      }
-
-      setDownloadProgress(100);
-
-      const blob = new Blob(chunks);
-      const blobUrl = URL.createObjectURL(blob);
+      // Método Senior: Delegación directa al sistema operativo
       const a = document.createElement("a");
-      a.href = blobUrl;
+      a.href = tunnelUrl;
+
+      // El navegador gestionará la descarga en segundo plano sin usar la RAM de la web
       a.download = `offgrid_media_${Date.now()}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 
-      toast.success("Download complete.");
+      toast.success("Download protocol initiated.");
     } catch {
-      toast.error("Download failed.");
+      toast.error("Handshake failed during download.");
     }
 
     setDownloading(false);
-    setDownloadProgress(0);
   };
 
-  // Descargar TODOS los items del carrusel de una vez
+  // Descargar TODOS los items del carrusel de una vez delegando al navegador
   const handleDownloadAll = async () => {
     if (items.length <= 1 || downloading) return;
     setDownloading(true);
@@ -514,33 +489,35 @@ export default function HomePage() {
       const item = items[i];
       const ext =
         item.type === "video" ? "mp4" : item.type === "audio" ? "mp3" : "jpg";
+
+      // La URL ya le dice al backend que fuerce la descarga (download=true)
       const tunnelUrl = `${ENGINE_BASE}/proxy?url=${encodeURIComponent(item.url)}&download=true&ext=${ext}`;
 
       try {
-        const res = await fetch(tunnelUrl);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
-        const blobUrl = URL.createObjectURL(blob);
-
+        // Creamos un enlace invisible y forzamos el clic
+        // Esto le dice al sistema operativo: "Encárgate tú de esta descarga"
         const a = document.createElement("a");
-        a.href = blobUrl;
+        a.href = tunnelUrl;
+
+        // Sugerimos nombre (aunque el backend ya envía Content-Disposition)
         a.download = `offgrid_${String(i + 1).padStart(2, "0")}.${ext}`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 
         setDownloadAllProgress({ current: i + 1, total: items.length });
 
+        // PAUSA VITAL: Le damos 1.5s entre descargas.
+        // Si no hacemos esto, Chrome/Safari pensará que es Spam y bloqueará las siguientes.
         if (i < items.length - 1) {
-          await new Promise((r) => setTimeout(r, 800));
+          await new Promise((r) => setTimeout(r, 1500));
         }
       } catch {
-        toast.error(`Asset ${i + 1} failed — skipping.`);
+        toast.error(`Error triggering download for asset ${i + 1}.`);
       }
     }
 
-    toast.success(`All ${items.length} assets downloaded.`);
+    toast.success(`Download started for all ${items.length} assets.`);
     setDownloading(false);
     setDownloadAllProgress(null);
   };

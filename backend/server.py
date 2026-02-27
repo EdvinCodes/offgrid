@@ -15,7 +15,6 @@ from typing import Optional
 ALLOWED_CDN_DOMAINS = [
     ".cdninstagram.com", ".instagram.com", ".fbcdn.net",
 ]
-ALLOWED_INPUT_DOMAINS = ["instagram.com", "www.instagram.com"]
 
 
 def is_valid_cdn_url(url: str) -> bool:
@@ -60,14 +59,22 @@ class ExtractionRequest(BaseModel):
 # ─── HELPERS ────────────────────────────────────────────────────────────────
 def get_shortcode(url: str) -> Optional[str]:
     try:
-        if "/reel/" in url:
-            return url.split("/reel/")[1].split("/")[0]
-        if "/p/" in url:
-            return url.split("/p/")[1].split("/")[0]
-    except Exception:
+        # 1. Limpiamos cualquier parámetro de query string (ej. ?utm_source=...)
+        clean_url = url.split("?")[0]
+        
+        # 2. Extraemos el código según el formato de la URL
+        if "/reel/" in clean_url:
+            return clean_url.split("/reel/")[1].split("/")[0]
+        if "/p/" in clean_url:
+            return clean_url.split("/p/")[1].split("/")[0]
+        if "/tv/" in clean_url:
+            return clean_url.split("/tv/")[1].split("/")[0]
+            
+    except Exception as e:
+        print(f"   ⚠️ Error parsing shortcode: {e}")
         return None
+        
     return None
-
 
 def _resolve_cookie_path() -> Optional[str]:
     for path in ("/etc/secrets/cookies.txt", "cookies.txt"):
@@ -204,7 +211,10 @@ def engine_ytdlp_reel(request: ExtractionRequest) -> dict:
 async def extract_media(request: ExtractionRequest):
     try:
         parsed = urlparse(request.url)
-        if parsed.netloc.lower() not in ALLOWED_INPUT_DOMAINS:
+        netloc = parsed.netloc.lower()
+        
+        # Validación flexible: permite instagram.com, www.instagram.com, m.instagram.com, etc.
+        if not (netloc == "instagram.com" or netloc.endswith(".instagram.com")):
             raise HTTPException(
                 status_code=422,
                 detail="Only Instagram URLs are supported.",
