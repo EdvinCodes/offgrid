@@ -12,17 +12,20 @@ import {
   ShieldCheck,
   ChevronRight,
   Heart,
+  Music,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 
-interface ExtractionResult {
-  type: "video" | "image";
+interface ExtractionItem {
+  type: "video" | "image" | "audio";
   url: string;
   thumbnail: string;
   description?: string;
 }
 
+// ✅ FIX: NEXT_PUBLIC_ solo para variables que el navegador necesita conocer.
+// Asegúrate de definir NEXT_PUBLIC_API_URL en tu .env.local
 const ENGINE_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const LOADING_STEPS = [
@@ -33,11 +36,14 @@ const LOADING_STEPS = [
   "Finalizing payload...",
 ];
 
+const INSTAGRAM_REGEX =
+  /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[A-Za-z0-9_-]+/;
+
 export default function HomePage() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState("");
-  const [result, setResult] = useState<ExtractionResult | null>(null);
+  const [result, setResult] = useState<ExtractionItem | null>(null);
   const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
@@ -52,58 +58,69 @@ export default function HomePage() {
 
   const handleExtract = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!url) return;
+    if (!url.trim()) return;
 
-    try {
-      new URL(url);
-    } catch {
-      toast.error("Formato de enlace inválido.");
+    // ✅ FIX: Validación de URL de Instagram antes de llamar al backend
+    if (!INSTAGRAM_REGEX.test(url.trim())) {
+      toast.error("Only Instagram post, reel or TV links are supported.");
       return;
     }
 
     setLoading(true);
     setResult(null);
 
-    const data = await extractMedia(url);
-    if (data.success) {
-      setResult(data as ExtractionResult);
+    const data = await extractMedia(url.trim());
+
+    if (data.success && data.items && data.items.length > 0) {
+      setResult(data.items[0] as ExtractionItem);
       toast.success("Target acquired.");
     } else {
       toast.error(data.error || "Connection refused by host.");
     }
+
     setLoading(false);
   };
 
-  const copyToClipboard = () => {
+  const copyToClipboard = async () => {
     if (!result) return;
-    navigator.clipboard.writeText(result.url);
-    toast.success("Stream URL copied to clipboard");
-  };
-
-  const handleDownload = async () => {
-    if (!result) return;
-    setDownloading(true);
     try {
-      const tunnelUrl = `${ENGINE_BASE}/proxy?url=${encodeURIComponent(result.url)}`;
-      const response = await fetch(tunnelUrl);
-      if (!response.ok) throw new Error("Proxy tunnel collapsed");
-
-      const blob = await response.blob();
-      const blobUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `offgrid_dump_${Date.now()}.${result.type === "video" ? "mp4" : "jpg"}`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(blobUrl);
-      toast.success("Asset secured locally.");
+      await navigator.clipboard.writeText(result.url);
+      toast.success("Stream URL copied to clipboard");
     } catch {
-      window.open(result.url, "_blank");
-      toast.warning("Direct stream opened (Fallback mode).");
-    } finally {
-      setDownloading(false);
+      toast.error("Clipboard access denied.");
     }
   };
+
+  // ✅ FIX: Parámetros download=true y ext correctos en la URL del proxy
+  const handleDownload = () => {
+    if (!result || downloading) return;
+    setDownloading(true);
+
+    const ext =
+      result.type === "video" ? "mp4" : result.type === "audio" ? "mp3" : "jpg";
+    const tunnelUrl = `${ENGINE_BASE}/proxy?url=${encodeURIComponent(result.url)}&download=true&ext=${ext}`;
+
+    const a = document.createElement("a");
+    a.href = tunnelUrl;
+    a.download = `offgrid_media_${Date.now()}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    toast.success("Download initiated.");
+    setDownloading(false);
+  };
+
+  const getTypeIcon = () => {
+    if (result?.type === "video") return <Disc className="w-3 h-3" />;
+    if (result?.type === "audio") return <Music className="w-3 h-3" />;
+    return <FileJson className="w-3 h-3" />;
+  };
+
+  // Construye la URL de preview del proxy (sin forzar descarga)
+  const previewUrl = result
+    ? `${ENGINE_BASE}/proxy?url=${encodeURIComponent(result.url)}`
+    : "";
 
   return (
     <main className="min-h-screen w-full relative flex flex-col items-center justify-center p-6 bg-dot-pattern overflow-hidden font-mono">
@@ -142,15 +159,16 @@ export default function HomePage() {
               <ChevronRight className="w-5 h-5" />
             </div>
             <Input
-              placeholder="Paste encrypted link..."
+              placeholder="Paste Instagram link..."
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               className="h-12 border-none bg-transparent shadow-none focus-visible:ring-0 text-base font-mono text-neutral-200 placeholder:text-neutral-700"
               autoComplete="off"
+              spellCheck={false}
             />
             <button
               type="submit"
-              disabled={loading || !url}
+              disabled={loading || !url.trim()}
               className="h-10 px-6 mr-1 bg-neutral-100 hover:bg-white text-black font-bold text-xs uppercase tracking-wider rounded-md transition-all disabled:opacity-20 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {loading ? (
@@ -183,40 +201,49 @@ export default function HomePage() {
               className="w-full"
             >
               <div className="rounded-lg border border-neutral-800 bg-[#0a0a0a] overflow-hidden shadow-2xl relative">
-                {/* Top decoration */}
+                {/* Top accent bar */}
                 <div className="h-1 w-full bg-gradient-to-r from-emerald-500 via-neutral-800 to-neutral-900" />
 
                 <div className="flex flex-col md:flex-row">
                   {/* Media Preview Area */}
-                  <div className="w-full md:w-1/2 bg-black border-b md:border-b-0 md:border-r border-neutral-800 relative min-h-[300px] flex items-center justify-center group overflow-hidden">
-                    {/* Grid Overlay on Image */}
+                  <div className="w-full md:w-1/2 bg-black border-b md:border-b-0 md:border-r border-neutral-800 relative min-h-[300px] flex items-center justify-center overflow-hidden">
+                    {/* Noise overlay */}
                     <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 z-10 pointer-events-none" />
 
-                    {/* Media Render */}
+                    {/* Media render */}
                     {result.type === "video" ? (
                       <video
-                        src={`${ENGINE_BASE}/proxy?url=${encodeURIComponent(result.url)}`}
+                        src={previewUrl}
+                        poster={result.thumbnail}
                         className="w-full h-full max-h-[400px] object-contain relative z-0"
                         controls
                         autoPlay
                         muted
                         loop
                       />
+                    ) : result.type === "audio" ? (
+                      // ✅ FIX: Render correcto para tipo audio
+                      <div className="flex flex-col items-center gap-4 p-8 z-0">
+                        {result.thumbnail && (
+                          <img
+                            src={result.thumbnail}
+                            className="w-32 h-32 rounded-full object-cover border border-neutral-800"
+                            alt="Audio thumbnail"
+                          />
+                        )}
+                        <audio src={previewUrl} controls className="w-full" />
+                      </div>
                     ) : (
                       <img
-                        src={`${ENGINE_BASE}/proxy?url=${encodeURIComponent(result.url)}`}
+                        src={previewUrl}
                         className="w-full h-full object-contain relative z-0"
-                        alt="Target"
+                        alt="Extracted media"
                       />
                     )}
 
                     {/* Type Tag */}
                     <div className="absolute top-3 left-3 z-20 bg-black/50 backdrop-blur border border-white/10 px-2 py-1 rounded text-[10px] text-white uppercase tracking-widest flex items-center gap-2">
-                      {result.type === "video" ? (
-                        <Disc className="w-3 h-3 animate-spin-slow" />
-                      ) : (
-                        <FileJson className="w-3 h-3" />
-                      )}
+                      {getTypeIcon()}
                       {result.type.toUpperCase()}_OBJ
                     </div>
                   </div>
@@ -250,7 +277,7 @@ export default function HomePage() {
                       <button
                         onClick={handleDownload}
                         disabled={downloading}
-                        className="w-full h-12 bg-white hover:bg-neutral-200 text-black font-bold text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 group"
+                        className="w-full h-12 bg-white hover:bg-neutral-200 text-black font-bold text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {downloading ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
@@ -266,6 +293,7 @@ export default function HomePage() {
                     {/* Footer Stats */}
                     <div className="pt-4 border-t border-neutral-900 flex justify-between text-[9px] text-neutral-600 font-mono uppercase">
                       <span>Proxy: Active</span>
+                      <span>Engine: OffGrid v5</span>
                     </div>
                   </div>
                 </div>
