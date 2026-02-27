@@ -13,6 +13,8 @@ import {
   ChevronRight,
   Heart,
   Music,
+  Video,
+  WifiOff,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -24,8 +26,6 @@ interface ExtractionItem {
   description?: string;
 }
 
-// ✅ FIX: NEXT_PUBLIC_ solo para variables que el navegador necesita conocer.
-// Asegúrate de definir NEXT_PUBLIC_API_URL en tu .env.local
 const ENGINE_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const LOADING_STEPS = [
@@ -39,13 +39,39 @@ const LOADING_STEPS = [
 const INSTAGRAM_REGEX =
   /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[A-Za-z0-9_-]+/;
 
+// ─── TIPOS ──────────────────────────────────────────────────────────────────
+type FormatType = "mp4" | "mp3";
+type EngineStatus = "checking" | "online" | "offline";
+
 export default function HomePage() {
   const [url, setUrl] = useState("");
+  const [format, setFormat] = useState<FormatType>("mp4");
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState("");
   const [result, setResult] = useState<ExtractionItem | null>(null);
   const [downloading, setDownloading] = useState(false);
 
+  // ── Feature 2: Health check ─────────────────────────────────────────────
+  const [engineStatus, setEngineStatus] = useState<EngineStatus>("checking");
+
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const res = await fetch(`${ENGINE_BASE}/health`, {
+          signal: AbortSignal.timeout(5000),
+        });
+        setEngineStatus(res.ok ? "online" : "offline");
+      } catch {
+        setEngineStatus("offline");
+      }
+    };
+    check();
+    // Re-check cada 60s
+    const interval = setInterval(check, 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // ── Loading steps animation ─────────────────────────────────────────────
   useEffect(() => {
     if (!loading) return;
     let step = 0;
@@ -56,20 +82,26 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, [loading]);
 
+  // ── Handlers ────────────────────────────────────────────────────────────
   const handleExtract = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!url.trim()) return;
 
-    // ✅ FIX: Validación de URL de Instagram antes de llamar al backend
     if (!INSTAGRAM_REGEX.test(url.trim())) {
       toast.error("Only Instagram post, reel or TV links are supported.");
+      return;
+    }
+
+    if (engineStatus === "offline") {
+      toast.error("Engine offline. Start the backend first.");
       return;
     }
 
     setLoading(true);
     setResult(null);
 
-    const data = await extractMedia(url.trim());
+    // ── Feature 1: pasamos el formato seleccionado ──────────────────────
+    const data = await extractMedia(url.trim(), format);
 
     if (data.success && data.items && data.items.length > 0) {
       setResult(data.items[0] as ExtractionItem);
@@ -91,7 +123,6 @@ export default function HomePage() {
     }
   };
 
-  // ✅ FIX: Parámetros download=true y ext correctos en la URL del proxy
   const handleDownload = () => {
     if (!result || downloading) return;
     setDownloading(true);
@@ -117,21 +148,36 @@ export default function HomePage() {
     return <FileJson className="w-3 h-3" />;
   };
 
-  // Construye la URL de preview del proxy (sin forzar descarga)
   const previewUrl = result
     ? `${ENGINE_BASE}/proxy?url=${encodeURIComponent(result.url)}`
     : "";
 
+  // ── Status dot config ────────────────────────────────────────────────────
+  const statusConfig = {
+    checking: { color: "bg-yellow-500", label: "Checking Engine..." },
+    online: { color: "bg-emerald-500", label: "System Online" },
+    offline: { color: "bg-red-500", label: "Engine Offline" },
+  } as const;
+  const { color: dotColor, label: statusLabel } = statusConfig[engineStatus];
+
   return (
     <main className="min-h-screen w-full relative flex flex-col items-center justify-center p-6 bg-dot-pattern overflow-hidden font-mono">
-      {/* Scanline Effect */}
       <div className="scanline" />
 
-      {/* Header Status Bar */}
+      {/* ── Feature 2: Header con status real ── */}
       <header className="fixed top-0 left-0 right-0 p-6 flex justify-between items-center z-50 text-[10px] uppercase tracking-widest text-neutral-500">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-          <span>System Online</span>
+          <div className={`w-2 h-2 ${dotColor} rounded-full animate-pulse`} />
+          <span
+            className={
+              engineStatus === "offline" ? "text-red-500" : "text-neutral-500"
+            }
+          >
+            {statusLabel}
+          </span>
+          {engineStatus === "offline" && (
+            <WifiOff className="w-3 h-3 text-red-500" />
+          )}
         </div>
       </header>
 
@@ -144,6 +190,34 @@ export default function HomePage() {
           <p className="text-neutral-500 text-xs md:text-sm tracking-wide">
             {"// BYPASS ALGORITHMS. EXTRACT RAW DATA. NO LOGS."}
           </p>
+        </div>
+
+        {/* ── Feature 1: Format Toggle ── */}
+        <div className="flex items-center gap-1 bg-[#0a0a0a] border border-neutral-800 rounded-md p-1 w-fit">
+          <button
+            type="button"
+            onClick={() => setFormat("mp4")}
+            className={`flex items-center gap-1.5 px-4 py-1.5 rounded text-xs font-bold uppercase tracking-widest transition-all ${
+              format === "mp4"
+                ? "bg-white text-black"
+                : "text-neutral-500 hover:text-neutral-300"
+            }`}
+          >
+            <Video className="w-3 h-3" />
+            MP4
+          </button>
+          <button
+            type="button"
+            onClick={() => setFormat("mp3")}
+            className={`flex items-center gap-1.5 px-4 py-1.5 rounded text-xs font-bold uppercase tracking-widest transition-all ${
+              format === "mp3"
+                ? "bg-emerald-500 text-black"
+                : "text-neutral-500 hover:text-neutral-300"
+            }`}
+          >
+            <Music className="w-3 h-3" />
+            MP3
+          </button>
         </div>
 
         {/* Input Console */}
@@ -168,7 +242,7 @@ export default function HomePage() {
             />
             <button
               type="submit"
-              disabled={loading || !url.trim()}
+              disabled={loading || !url.trim() || engineStatus === "offline"}
               className="h-10 px-6 mr-1 bg-neutral-100 hover:bg-white text-black font-bold text-xs uppercase tracking-wider rounded-md transition-all disabled:opacity-20 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {loading ? (
@@ -179,13 +253,19 @@ export default function HomePage() {
             </button>
           </div>
 
-          {/* Status logs */}
+          {/* Status log */}
           <div className="h-6 mt-2 text-[10px] text-emerald-500/80 font-mono pl-4 flex items-center gap-2">
             {loading && (
               <>
                 <Loader2 className="w-3 h-3 animate-spin" />
                 <span>{loadingMsg}</span>
               </>
+            )}
+            {/* Aviso offline bajo el input */}
+            {!loading && engineStatus === "offline" && (
+              <span className="text-red-500/80">
+                ENGINE_OFFLINE — Run python backend/server.py
+              </span>
             )}
           </div>
         </motion.form>
@@ -201,16 +281,13 @@ export default function HomePage() {
               className="w-full"
             >
               <div className="rounded-lg border border-neutral-800 bg-[#0a0a0a] overflow-hidden shadow-2xl relative">
-                {/* Top accent bar */}
                 <div className="h-1 w-full bg-gradient-to-r from-emerald-500 via-neutral-800 to-neutral-900" />
 
                 <div className="flex flex-col md:flex-row">
-                  {/* Media Preview Area */}
+                  {/* Media Preview */}
                   <div className="w-full md:w-1/2 bg-black border-b md:border-b-0 md:border-r border-neutral-800 relative min-h-[300px] flex items-center justify-center overflow-hidden">
-                    {/* Noise overlay */}
                     <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 z-10 pointer-events-none" />
 
-                    {/* Media render */}
                     {result.type === "video" ? (
                       <video
                         src={previewUrl}
@@ -222,7 +299,6 @@ export default function HomePage() {
                         loop
                       />
                     ) : result.type === "audio" ? (
-                      // ✅ FIX: Render correcto para tipo audio
                       <div className="flex flex-col items-center gap-4 p-8 z-0">
                         {result.thumbnail && (
                           <img
@@ -241,7 +317,6 @@ export default function HomePage() {
                       />
                     )}
 
-                    {/* Type Tag */}
                     <div className="absolute top-3 left-3 z-20 bg-black/50 backdrop-blur border border-white/10 px-2 py-1 rounded text-[10px] text-white uppercase tracking-widest flex items-center gap-2">
                       {getTypeIcon()}
                       {result.type.toUpperCase()}_OBJ
@@ -290,10 +365,19 @@ export default function HomePage() {
                       </button>
                     </div>
 
-                    {/* Footer Stats */}
                     <div className="pt-4 border-t border-neutral-900 flex justify-between text-[9px] text-neutral-600 font-mono uppercase">
                       <span>Proxy: Active</span>
-                      <span>Engine: OffGrid v5</span>
+                      {/* ── Feature 1: muestra el formato activo en el resultado ── */}
+                      <span>
+                        Format:{" "}
+                        <span
+                          className={
+                            format === "mp3" ? "text-emerald-500" : "text-white"
+                          }
+                        >
+                          {format.toUpperCase()}
+                        </span>
+                      </span>
                     </div>
                   </div>
                 </div>
