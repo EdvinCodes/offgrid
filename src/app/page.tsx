@@ -399,22 +399,48 @@ export default function HomePage() {
   };
 
   // Descargar TODOS los items del carrusel de una vez
-  const handleDownloadAll = () => {
-    if (items.length <= 1) return;
-    items.forEach((item, i) => {
+  const handleDownloadAll = async () => {
+    if (items.length <= 1 || downloading) return;
+    setDownloading(true);
+    toast.info(`Downloading ${items.length} assets... do not close the tab.`);
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
       const ext =
         item.type === "video" ? "mp4" : item.type === "audio" ? "mp3" : "jpg";
       const tunnelUrl = `${ENGINE_BASE}/proxy?url=${encodeURIComponent(item.url)}&download=true&ext=${ext}`;
-      setTimeout(() => {
+
+      try {
+        // fetch el blob — esto sí funciona sin bloqueo de popup
+        const res = await fetch(tunnelUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+
         const a = document.createElement("a");
-        a.href = tunnelUrl;
-        a.download = `offgrid_${i + 1}_${Date.now()}.${ext}`;
+        a.href = blobUrl;
+        a.download = `offgrid_${String(i + 1).padStart(2, "0")}.${ext}`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-      }, i * 400); // delay escalonado para no saturar
-    });
-    toast.success(`Downloading all ${items.length} assets...`);
+
+        // Revocar el blob tras un tick para liberar memoria
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+
+        toast.success(`Asset ${i + 1}/${items.length} downloaded.`);
+
+        // Pequeña pausa entre descargas para no saturar
+        if (i < items.length - 1) {
+          await new Promise((r) => setTimeout(r, 800));
+        }
+      } catch (err) {
+        toast.error(`Asset ${i + 1} failed — skipping.`);
+        console.error(`Download error for item ${i + 1}:`, err);
+      }
+    }
+
+    setDownloading(false);
+    toast.success(`All ${items.length} assets downloaded.`);
   };
 
   const getTypeIcon = () => {
@@ -708,26 +734,45 @@ export default function HomePage() {
                       {items.length > 1 && (
                         <button
                           onClick={handleDownloadAll}
-                          className="w-full h-10 border border-emerald-900 hover:border-emerald-500 text-emerald-700 hover:text-emerald-400 text-xs uppercase tracking-widest transition-colors flex items-center justify-center gap-2"
+                          disabled={downloading}
+                          className="w-full h-10 border border-emerald-900 hover:border-emerald-500 text-emerald-700 hover:text-emerald-400 text-xs uppercase tracking-widest transition-colors flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                          <Layers className="w-3 h-3" />
-                          Download All {items.length} Assets
+                          {downloading ? (
+                            <>
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Downloading...
+                            </>
+                          ) : (
+                            <>
+                              <Layers className="w-3 h-3" />
+                              Download All {items.length} Assets
+                            </>
+                          )}
                         </button>
                       )}
                     </div>
 
                     <div className="pt-4 border-t border-neutral-900 flex justify-between text-[9px] text-neutral-600 font-mono uppercase">
                       <span>Proxy: Active</span>
-                      <span>
-                        Format:{" "}
-                        <span
-                          className={
-                            format === "mp3" ? "text-emerald-500" : "text-white"
-                          }
-                        >
-                          {format.toUpperCase()}
+                      {/* Solo mostrar formato si es reel (audio/video), no para imágenes */}
+                      {result.type !== "image" ? (
+                        <span>
+                          Format:{" "}
+                          <span
+                            className={
+                              result.type === "audio"
+                                ? "text-emerald-500"
+                                : "text-white"
+                            }
+                          >
+                            {result.type === "audio" ? "MP3" : "MP4"}
+                          </span>
                         </span>
-                      </span>
+                      ) : (
+                        <span>
+                          Type: <span className="text-blue-400">IMAGE</span>
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
