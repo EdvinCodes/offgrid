@@ -21,6 +21,7 @@ import {
   ChevronLeft,
   ChevronRight as ChevronRightIcon,
   Layers,
+  Share2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -270,6 +271,28 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, []);
 
+  // ── Auto-extract desde ?share= ───────────────────────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const shared = params.get("share");
+    if (shared && INSTAGRAM_REGEX.test(shared)) {
+      setUrl(shared);
+      // Limpiar el param de la URL sin recargar la página
+      window.history.replaceState({}, "", "/");
+      // Auto-trigger la extracción
+      extractMedia(shared, "mp4").then((data) => {
+        if (data.success && data.items && data.items.length > 0) {
+          const extracted = data.items as ExtractionItem[];
+          setItems(extracted);
+          setActiveIndex(0);
+          toast.success("Shared link loaded.");
+        } else {
+          toast.error(data.error || "Could not load shared link.");
+        }
+      });
+    }
+  }, []);
+
   // ── Loading steps ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!loading) return;
@@ -380,6 +403,19 @@ export default function HomePage() {
     try {
       await navigator.clipboard.writeText(result.url);
       toast.success("Stream URL copied to clipboard");
+    } catch {
+      toast.error("Clipboard access denied.");
+    }
+  };
+
+  const handleShare = async () => {
+    if (!url.trim()) return;
+    const shareUrl = `${window.location.origin}/?share=${encodeURIComponent(url.trim())}`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      toast.success(
+        "Share link copied — anyone with it will auto-extract this post.",
+      );
     } catch {
       toast.error("Clipboard access denied.");
     }
@@ -747,6 +783,13 @@ export default function HomePage() {
                         className="w-full h-10 border border-neutral-700 hover:border-white hover:text-white text-neutral-400 text-xs uppercase tracking-widest transition-colors flex items-center justify-center gap-2"
                       >
                         <Copy className="w-3 h-3" /> Copy Source Link
+                      </button>
+
+                      <button
+                        onClick={handleShare}
+                        className="w-full h-10 border border-neutral-700 hover:border-white hover:text-white text-neutral-400 text-xs uppercase tracking-widest transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Share2 className="w-3 h-3" /> Share Extraction Link
                       </button>
 
                       {/* ── Botón descarga individual ── */}
