@@ -235,7 +235,6 @@ export default function HomePage() {
   const [url, setUrl] = useState("");
   const [format, setFormat] = useState<FormatType>("mp4");
   const [loading, setLoading] = useState(false);
-  const [loadingMsg, setLoadingMsg] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [engineStatus, setEngineStatus] = useState<EngineStatus>("checking");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -246,6 +245,9 @@ export default function HomePage() {
     current: number;
     total: number;
   } | null>(null);
+
+  // ── Typing animation ─────────────────────────────────────────────────────
+  const [displayedMsg, setDisplayedMsg] = useState("");
 
   // ── Feature 4: carrusel ──────────────────────────────────────────────────
   const [items, setItems] = useState<ExtractionItem[]>([]);
@@ -295,13 +297,39 @@ export default function HomePage() {
 
   // ── Loading steps ────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!loading) return;
-    let step = 0;
-    const interval = setInterval(() => {
-      setLoadingMsg(LOADING_STEPS[step % LOADING_STEPS.length]);
-      step++;
-    }, 600);
-    return () => clearInterval(interval);
+    if (!loading) {
+      setDisplayedMsg("");
+      return;
+    }
+
+    let stepIndex = 0;
+    let charIndex = 0;
+    let currentMsg = "";
+    let timeout: ReturnType<typeof setTimeout>;
+
+    const typeChar = () => {
+      const step = LOADING_STEPS[stepIndex % LOADING_STEPS.length];
+
+      if (charIndex < step.length) {
+        // Escribe letra a letra
+        currentMsg = step.slice(0, charIndex + 1);
+        setDisplayedMsg(currentMsg + "█"); // cursor parpadeante
+        charIndex++;
+        timeout = setTimeout(typeChar, 35); // velocidad de typing
+      } else {
+        // Mensaje completo — espera antes de pasar al siguiente
+        setDisplayedMsg(currentMsg + "█");
+        timeout = setTimeout(() => {
+          stepIndex++;
+          charIndex = 0;
+          currentMsg = "";
+          typeChar();
+        }, 900); // pausa entre mensajes
+      }
+    };
+
+    typeChar();
+    return () => clearTimeout(timeout);
   }, [loading]);
 
   // ── Cargar historial ─────────────────────────────────────────────────────
@@ -647,12 +675,7 @@ export default function HomePage() {
             </button>
           </div>
           <div className="h-6 mt-2 text-[10px] text-emerald-500/80 font-mono pl-4 flex items-center gap-2">
-            {loading && (
-              <>
-                <Loader2 className="w-3 h-3 animate-spin" />
-                <span>{loadingMsg}</span>
-              </>
-            )}
+            {loading && <span className="tracking-wide">{displayedMsg}</span>}
             {!loading && engineStatus === "offline" && (
               <span className="text-red-500/80">
                 ENGINE_OFFLINE — Run python backend/server.py
