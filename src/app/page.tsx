@@ -53,6 +53,14 @@ export default function HomePage() {
   const handleExtract = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!url) return;
+
+    try {
+      new URL(url);
+    } catch {
+      toast.error("Formato de enlace inválido.");
+      return;
+    }
+
     setLoading(true);
     setResult(null);
 
@@ -257,7 +265,6 @@ export default function HomePage() {
 
                     {/* Footer Stats */}
                     <div className="pt-4 border-t border-neutral-900 flex justify-between text-[9px] text-neutral-600 font-mono uppercase">
-                      <span>Latency: 24ms</span>
                       <span>Proxy: Active</span>
                     </div>
                   </div>

@@ -1,23 +1,29 @@
 "use server";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const BASE = process.env.API_URL || "http://127.0.0.1:8000";
 const ENGINE_URL = `${BASE}/extract`;
 
 type ExtractResponse = {
   success: boolean;
-  type?: "video" | "image";
-  url?: string;
-  thumbnail?: string;
-  description?: string;
+  engine?: string;
+  items?: Array<{
+    type: "video" | "image" | "audio";
+    url: string;
+    thumbnail: string;
+    description?: string;
+  }>;
   error?: string;
 };
 
-export async function extractMedia(url: string): Promise<ExtractResponse> {
+export async function extractMedia(
+  url: string,
+  formatType: "mp4" | "mp3" = "mp4",
+): Promise<ExtractResponse> {
   try {
     const response = await fetch(ENGINE_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, format_type: formatType }),
       cache: "no-store",
     });
 
@@ -25,8 +31,7 @@ export async function extractMedia(url: string): Promise<ExtractResponse> {
       throw new Error("Local engine unreachable.");
     }
 
-    const data = (await response.json()) as ExtractResponse;
-    return data;
+    return (await response.json()) as ExtractResponse;
   } catch {
     return {
       success: false,
