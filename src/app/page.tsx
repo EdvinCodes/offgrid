@@ -240,6 +240,12 @@ export default function HomePage() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
+  const [downloadProgress, setDownloadProgress] = useState(0); // 0-100 para individual
+  const [downloadAllProgress, setDownloadAllProgress] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
+
   // ── Feature 4: carrusel ──────────────────────────────────────────────────
   const [items, setItems] = useState<ExtractionItem[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -379,30 +385,66 @@ export default function HomePage() {
     }
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!result || downloading) return;
     setDownloading(true);
+    setDownloadProgress(0);
 
     const ext =
       result.type === "video" ? "mp4" : result.type === "audio" ? "mp3" : "jpg";
     const tunnelUrl = `${ENGINE_BASE}/proxy?url=${encodeURIComponent(result.url)}&download=true&ext=${ext}`;
 
-    const a = document.createElement("a");
-    a.href = tunnelUrl;
-    a.download = `offgrid_media_${Date.now()}.${ext}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    try {
+      const res = await fetch(tunnelUrl);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    toast.success("Download initiated.");
+      // Content-Length para calcular % real
+      const contentLength = res.headers.get("content-length");
+      const total = contentLength ? parseInt(contentLength, 10) : null;
+
+      const reader = res.body!.getReader();
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        if (total) {
+          setDownloadProgress(Math.round((received / total) * 100));
+        } else {
+          // Sin Content-Length: animación indeterminada
+          setDownloadProgress((p) => Math.min(p + 5, 90));
+        }
+      }
+
+      setDownloadProgress(100);
+
+      const blob = new Blob(chunks);
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `offgrid_media_${Date.now()}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+
+      toast.success("Download complete.");
+    } catch {
+      toast.error("Download failed.");
+    }
+
     setDownloading(false);
+    setDownloadProgress(0);
   };
 
   // Descargar TODOS los items del carrusel de una vez
   const handleDownloadAll = async () => {
     if (items.length <= 1 || downloading) return;
     setDownloading(true);
-    toast.info(`Downloading ${items.length} assets... do not close the tab.`);
+    setDownloadAllProgress({ current: 0, total: items.length });
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -411,7 +453,6 @@ export default function HomePage() {
       const tunnelUrl = `${ENGINE_BASE}/proxy?url=${encodeURIComponent(item.url)}&download=true&ext=${ext}`;
 
       try {
-        // fetch el blob — esto sí funciona sin bloqueo de popup
         const res = await fetch(tunnelUrl);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const blob = await res.blob();
@@ -423,24 +464,21 @@ export default function HomePage() {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-
-        // Revocar el blob tras un tick para liberar memoria
         setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 
-        toast.success(`Asset ${i + 1}/${items.length} downloaded.`);
+        setDownloadAllProgress({ current: i + 1, total: items.length });
 
-        // Pequeña pausa entre descargas para no saturar
         if (i < items.length - 1) {
           await new Promise((r) => setTimeout(r, 800));
         }
-      } catch (err) {
+      } catch {
         toast.error(`Asset ${i + 1} failed — skipping.`);
-        console.error(`Download error for item ${i + 1}:`, err);
       }
     }
 
-    setDownloading(false);
     toast.success(`All ${items.length} assets downloaded.`);
+    setDownloading(false);
+    setDownloadAllProgress(null);
   };
 
   const getTypeIcon = () => {
@@ -461,7 +499,7 @@ export default function HomePage() {
   const { color: dotColor, label: statusLabel } = statusConfig[engineStatus];
 
   return (
-    <main className="min-h-screen w-full relative flex flex-col items-center justify-center p-6 bg-dot-pattern overflow-hidden font-mono">
+    <main className="min-h-screen w-full relative flex flex-col items-center justify-center px-6 pt-20 pb-24 bg-dot-pattern overflow-hidden font-mono">
       <div className="scanline" />
 
       {/* Header */}
@@ -711,44 +749,74 @@ export default function HomePage() {
                         <Copy className="w-3 h-3" /> Copy Source Link
                       </button>
 
-                      <button
-                        onClick={handleDownload}
-                        disabled={downloading}
-                        className="w-full h-12 bg-white hover:bg-neutral-200 text-black font-bold text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {downloading ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <>
-                            <Download className="w-4 h-4 group-hover:translate-y-0.5 transition-transform" />
-                            <span>
-                              {items.length > 1
-                                ? `Pull Asset ${activeIndex + 1}/${items.length}`
-                                : "Pull to Local Drive"}
-                            </span>
-                          </>
-                        )}
-                      </button>
-
-                      {/* ── Botón Download All (solo en carruseles) ── */}
-                      {items.length > 1 && (
+                      {/* ── Botón descarga individual ── */}
+                      <div className="flex flex-col gap-1">
                         <button
-                          onClick={handleDownloadAll}
+                          onClick={handleDownload}
                           disabled={downloading}
-                          className="w-full h-10 border border-emerald-900 hover:border-emerald-500 text-emerald-700 hover:text-emerald-400 text-xs uppercase tracking-widest transition-colors flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                          className="w-full h-12 bg-white hover:bg-neutral-200 text-black font-bold text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {downloading ? (
+                          {downloading && !downloadAllProgress ? (
                             <>
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                              Downloading...
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              {downloadProgress > 0 && downloadProgress < 100
+                                ? `${downloadProgress}%`
+                                : "Downloading..."}
                             </>
                           ) : (
                             <>
-                              <Layers className="w-3 h-3" />
-                              Download All {items.length} Assets
+                              <Download className="w-4 h-4 group-hover:translate-y-0.5 transition-transform" />
+                              {items.length > 1
+                                ? `Pull Asset ${activeIndex + 1}/${items.length}`
+                                : "Pull to Local Drive"}
                             </>
                           )}
                         </button>
+
+                        {/* Barra debajo del botón — solo visible durante descarga individual */}
+                        {downloading && !downloadAllProgress && (
+                          <div className="w-full h-0.5 bg-neutral-800 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-emerald-400 transition-all duration-300"
+                              style={{ width: `${downloadProgress}%` }}
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* ── Botón Download All ── */}
+                      {items.length > 1 && (
+                        <div className="flex flex-col gap-1">
+                          <button
+                            onClick={handleDownloadAll}
+                            disabled={downloading}
+                            className="w-full h-10 border border-emerald-900 hover:border-emerald-500 text-emerald-700 hover:text-emerald-400 text-xs uppercase tracking-widest transition-colors flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            {downloadAllProgress ? (
+                              <>
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                {`${downloadAllProgress.current}/${downloadAllProgress.total} assets...`}
+                              </>
+                            ) : (
+                              <>
+                                <Layers className="w-3 h-3" />
+                                {`Download All ${items.length} Assets`}
+                              </>
+                            )}
+                          </button>
+
+                          {/* Barra debajo — solo visible durante Download All */}
+                          {downloadAllProgress && (
+                            <div className="w-full h-0.5 bg-neutral-800 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-emerald-400 transition-all duration-500"
+                                style={{
+                                  width: `${(downloadAllProgress.current / downloadAllProgress.total) * 100}%`,
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
 
