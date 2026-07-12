@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { extractMedia } from "@/actions/extract";
+import { isValidInstagramUrl, isReelUrl } from "@/lib/instagram";
 import { Input } from "@/components/ui/input";
 import {
   Loader2,
@@ -17,7 +18,7 @@ import {
   WifiOff,
   History,
   X,
-  Image,
+  Image as ImageIcon,
   ChevronLeft,
   ChevronRight as ChevronRightIcon,
   Layers,
@@ -57,9 +58,6 @@ const LOADING_STEPS = [
   "Extracting raw stream...",
   "Finalizing payload...",
 ];
-
-const INSTAGRAM_REGEX =
-  /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[A-Za-z0-9_-]+/;
 
 // ─── HELPERS ────────────────────────────────────────────────────────────────
 function loadHistory(): HistoryEntry[] {
@@ -102,7 +100,7 @@ function HistoryPanel({
   const typeIcon = (type: ExtractionItem["type"]) => {
     if (type === "video") return <Disc className="w-3 h-3 text-emerald-500" />;
     if (type === "audio") return <Music className="w-3 h-3 text-purple-400" />;
-    return <Image className="w-3 h-3 text-blue-400" />;
+    return <ImageIcon className="w-3 h-3 text-blue-400" />;
   };
 
   return (
@@ -240,7 +238,6 @@ export default function HomePage() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
-  const [downloadProgress, setDownloadProgress] = useState(0); // 0-100 para individual
   const [downloadAllProgress, setDownloadAllProgress] = useState<{
     current: number;
     total: number;
@@ -254,7 +251,7 @@ export default function HomePage() {
   const [activeIndex, setActiveIndex] = useState(0);
   const result = items[activeIndex] ?? null;
 
-  const isReel = /instagram\.com\/reel\//.test(url);
+  const isReel = isReelUrl(url);
 
   // ── Health check ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -277,22 +274,30 @@ export default function HomePage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const shared = params.get("share");
-    if (shared && INSTAGRAM_REGEX.test(shared)) {
-      setUrl(shared);
-      // Limpiar el param de la URL sin recargar la página
-      window.history.replaceState({}, "", "/");
-      // Auto-trigger la extracción
-      extractMedia(shared, "mp4").then((data) => {
-        if (data.success && data.items && data.items.length > 0) {
-          const extracted = data.items as ExtractionItem[];
-          setItems(extracted);
-          setActiveIndex(0);
-          toast.success("Shared link loaded.");
-        } else {
-          toast.error(data.error || "Could not load shared link.");
-        }
-      });
-    }
+    if (!shared || !isValidInstagramUrl(shared)) return;
+
+    setUrl(shared);
+    window.history.replaceState({}, "", "/");
+
+    void (async () => {
+      setLoading(true);
+      setItems([]);
+      setActiveIndex(0);
+      setShowHistory(false);
+
+      const data = await extractMedia(shared, "mp4");
+
+      if (data.success && data.items && data.items.length > 0) {
+        const extracted = data.items as ExtractionItem[];
+        setItems(extracted);
+        setActiveIndex(0);
+        toast.success("Shared link loaded.");
+      } else {
+        toast.error(data.error || "Could not load shared link.");
+      }
+
+      setLoading(false);
+    })();
   }, []);
 
   // ── Loading steps ────────────────────────────────────────────────────────
@@ -354,7 +359,7 @@ export default function HomePage() {
     e.preventDefault();
     if (!url.trim()) return;
 
-    if (!INSTAGRAM_REGEX.test(url.trim())) {
+    if (!isValidInstagramUrl(url.trim())) {
       toast.error("Only Instagram post, reel or TV links are supported.");
       return;
     }
@@ -631,8 +636,8 @@ export default function HomePage() {
               value={url}
               onChange={(e) => {
                 setUrl(e.target.value);
-                if (!/instagram\.com\/reel\//.test(e.target.value)) {
-                  setFormat("mp4"); // reset silencioso
+                if (!isReelUrl(e.target.value)) {
+                  setFormat("mp4");
                 }
               }}
               className="h-12 border-none bg-transparent shadow-none focus-visible:ring-0 text-base font-mono text-neutral-200 placeholder:text-neutral-700"
@@ -802,9 +807,7 @@ export default function HomePage() {
                           {downloading && !downloadAllProgress ? (
                             <>
                               <Loader2 className="w-4 h-4 animate-spin" />
-                              {downloadProgress > 0 && downloadProgress < 100
-                                ? `${downloadProgress}%`
-                                : "Downloading..."}
+                              Downloading...
                             </>
                           ) : (
                             <>
@@ -815,16 +818,6 @@ export default function HomePage() {
                             </>
                           )}
                         </button>
-
-                        {/* Barra debajo del botón — solo visible durante descarga individual */}
-                        {downloading && !downloadAllProgress && (
-                          <div className="w-full h-0.5 bg-neutral-800 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-emerald-400 transition-all duration-300"
-                              style={{ width: `${downloadProgress}%` }}
-                            />
-                          </div>
-                        )}
                       </div>
 
                       {/* ── Botón Download All ── */}

@@ -59,21 +59,12 @@ class ExtractionRequest(BaseModel):
 # ─── HELPERS ────────────────────────────────────────────────────────────────
 def get_shortcode(url: str) -> Optional[str]:
     try:
-        # 1. Limpiamos cualquier parámetro de query string (ej. ?utm_source=...)
-        clean_url = url.split("?")[0]
-        
-        # 2. Extraemos el código según el formato de la URL
-        if "/reel/" in clean_url:
-            return clean_url.split("/reel/")[1].split("/")[0]
-        if "/p/" in clean_url:
-            return clean_url.split("/p/")[1].split("/")[0]
-        if "/tv/" in clean_url:
-            return clean_url.split("/tv/")[1].split("/")[0]
-            
+        parsed = urlparse(url.split("?")[0].rstrip("/"))
+        parts = [p for p in parsed.path.split("/") if p]
+        if len(parts) >= 2 and parts[0] in ("p", "reel", "tv"):
+            return parts[1]
     except Exception as e:
         print(f"   ⚠️ Error parsing shortcode: {e}")
-        return None
-        
     return None
 
 def _resolve_cookie_path() -> Optional[str]:
@@ -152,7 +143,6 @@ def engine_ytdlp_reel(request: ExtractionRequest) -> dict:
         "nocheckcertificate": True,
         "ignoreerrors": True,
         "socket_timeout": 15,
-        "cookiefile": cookie_path,
         "extract_flat": False,
         "format": "bestaudio/best" if request.format_type == "mp3" else "best",
         "user_agent": (
@@ -161,6 +151,8 @@ def engine_ytdlp_reel(request: ExtractionRequest) -> dict:
             "Version/17.0 Mobile/15E148 Safari/604.1"
         ),
     }
+    if cookie_path:
+        ydl_opts["cookiefile"] = cookie_path
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(request.url, download=False)
@@ -206,23 +198,28 @@ def engine_ytdlp_reel(request: ExtractionRequest) -> dict:
         return {"success": True, "engine": "yt-dlp", "items": results}
 
 
+def is_instagram_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url.strip())
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = parsed.netloc.lower().removeprefix("www.")
+        if host not in ("instagram.com", "m.instagram.com"):
+            return False
+        parts = [p for p in parsed.path.split("/") if p]
+        return len(parts) >= 2 and parts[0] in ("p", "reel", "tv")
+    except Exception:
+        return False
+
+
 # ─── ENDPOINT /extract ──────────────────────────────────────────────────────
 @app.post("/extract")
 async def extract_media(request: ExtractionRequest):
-    try:
-        parsed = urlparse(request.url)
-        netloc = parsed.netloc.lower()
-        
-        # Validación flexible: permite instagram.com, www.instagram.com, m.instagram.com, etc.
-        if not (netloc == "instagram.com" or netloc.endswith(".instagram.com")):
-            raise HTTPException(
-                status_code=422,
-                detail="Only Instagram URLs are supported.",
-            )
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=422, detail="Invalid URL format.")
+    if not is_instagram_url(request.url):
+        raise HTTPException(
+            status_code=422,
+            detail="Only Instagram post, reel or TV links are supported.",
+        )
 
     is_post = "/p/" in request.url
     is_reel = "/reel/" in request.url or "/tv/" in request.url
@@ -294,26 +291,37 @@ async def proxy_media(
         "Referer": "https://www.instagram.com/",
     }
 
-    async with httpx.AsyncClient() as client:
-        try:
-            head = await client.head(url, headers=req_headers, timeout=10.0)
-            head.raise_for_status()
-            content_type = head.headers.get("content-type", "application/octet-stream")
-        except httpx.HTTPStatusError as e:
+    # Some CDNs reject HEAD requests — probe with a streaming GET instead.
+    client = httpx.AsyncClient(follow_redirects=True, timeout=30.0)
+    try:
+        req = client.build_request("GET", url, headers=req_headers)
+        upstream = await client.send(req, stream=True)
+
+        if upstream.status_code >= 400:
+            await upstream.aclose()
             raise HTTPException(
                 status_code=502,
-                detail=f"CDN returned {e.response.status_code}",
+                detail=f"CDN returned {upstream.status_code}",
             )
-        except Exception:
-            raise HTTPException(status_code=502, detail="CDN unreachable")
 
-    async def stream_generator():
-        async with httpx.AsyncClient() as client:
-            async with client.stream(
-                "GET", url, headers=req_headers, timeout=30.0
-            ) as response:
-                async for chunk in response.aiter_bytes(chunk_size=32 * 1024):
+        content_type = upstream.headers.get(
+            "content-type", "application/octet-stream"
+        )
+
+        async def stream_generator():
+            try:
+                async for chunk in upstream.aiter_bytes(chunk_size=32 * 1024):
                     yield chunk
+            finally:
+                await upstream.aclose()
+                await client.aclose()
+
+    except HTTPException:
+        await client.aclose()
+        raise
+    except Exception:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="CDN unreachable")
 
     response_headers = {}
     if download:

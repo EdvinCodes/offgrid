@@ -15,6 +15,23 @@ type ExtractResponse = {
   error?: string;
 };
 
+function parseErrorBody(body: unknown): string | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const record = body as Record<string, unknown>;
+  const detail = record.detail ?? record.error;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) =>
+        typeof item === "object" && item && "msg" in item
+          ? String((item as { msg: unknown }).msg)
+          : String(item),
+      )
+      .join(", ");
+  }
+  return undefined;
+}
+
 export async function extractMedia(
   url: string,
   formatType: "mp4" | "mp3" = "mp4",
@@ -27,11 +44,18 @@ export async function extractMedia(
       cache: "no-store",
     });
 
+    const data = (await response.json()) as ExtractResponse;
+
     if (!response.ok) {
-      throw new Error("Local engine unreachable.");
+      return {
+        success: false,
+        error:
+          parseErrorBody(data) ||
+          `Engine error (${response.status}).`,
+      };
     }
 
-    return (await response.json()) as ExtractResponse;
+    return data;
   } catch {
     return {
       success: false,
